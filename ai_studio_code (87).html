@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>深層挖掘：顯示修復版</title>
+    <style>
+        :root {
+            --tile-size: 50px;
+            --sky-color: #87CEEB;
+            --dirt-color: #5d4037;
+            --rock-color: #3e2723;
+            --bg-ui: #212121;
+            --modal-bg: rgba(0, 0, 0, 0.9);
+            --gold-color: #ffd700;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: white;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* --- 頂部 UI --- */
+        .ui-panel {
+            width: 700px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--bg-ui);
+            padding: 10px 20px;
+            border-bottom: 4px solid #3e2723;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            z-index: 20;
+        }
+
+        .stat-group { display: flex; gap: 15px; }
+        
+        .stat-box { 
+            font-weight: bold; font-size: 1.1rem; 
+            display: flex; align-items: center; gap: 5px; 
+            position: relative;
+            padding: 5px 10px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.05);
+            overflow: hidden;
+            min-width: 140px;
+        }
+        
+        .energy-bar-bg {
+            position: absolute;
+            left: 0; top: 0; bottom: 0;
+            width: 100%; /* 預設滿 */
+            background: linear-gradient(90deg, rgba(118, 255, 3, 0.2), rgba(118, 255, 3, 0.5));
+            z-index: 0;
+            transition: width 0.1s linear; /* 更新速度加快 */
+        }
+
+        .stat-content { position: relative; z-index: 1; display: flex; align-items: center; gap: 5px; text-shadow: 1px 1px 2px black; }
+        .energy-val { color: #76ff03; }
+        .gold-val { color: var(--gold-color); }
+        .depth-val { color: #80d8ff; }
+
+        .btn-group { display: flex; gap: 8px; }
+        .ui-btn {
+            border: none; padding: 8px 12px; border-radius: 4px;
+            color: white; cursor: pointer; font-weight: bold;
+            transition: transform 0.1s;
+        }
+        .ui-btn:active { transform: scale(0.95); }
+        .btn-inv { background: #5c6bc0; }
+        .btn-shop { background: #ff9800; }
+        .btn-reset { background: #d32f2f; font-size: 0.8rem; }
+
+        /* --- 遊戲主區域 --- */
+        .game-area {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            align-items: flex-start;
+        }
+
+        .toolbar {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .tool-slot {
+            width: 60px; height: 60px;
+            background: #37474f;
+            border: 2px solid #546e7a;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            position: relative;
+            transition: 0.2s;
+        }
+        .tool-slot:hover { background: #455a64; border-color: #fff; }
+        .tool-slot:active { transform: scale(0.9); }
+        .tool-icon { font-size: 24px; }
+        .tool-key { position: absolute; top: 2px; left: 2px; font-size: 10px; color: #aaa; }
+        .tool-count { position: absolute; bottom: 2px; right: 4px; font-weight: bold; font-size: 14px; }
+
+        #game-viewport {
+            width: 600px; height: 600px;
+            background-color: var(--sky-color);
+            border: 4px solid #424242;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        #game-world {
+            position: absolute; top: 0; left: 0; width: 100%;
+            transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            will-change: transform;
+        }
+
+        .tile {
+            width: var(--tile-size); height: var(--tile-size);
+            position: absolute; display: flex;
+            justify-content: center; align-items: center;
+            font-size: 24px; box-sizing: border-box;
+        }
+        .tile.dirt {
+            background-color: var(--dirt-color);
+            border: 1px solid #4e342e;
+        }
+        .tile.rock {
+            background-color: var(--rock-color);
+            border: 1px solid #1b1b1b;
+            background-image: repeating-linear-gradient(45deg, #3e2723 0, #2d1b18 20px);
+        }
+        
+        .tile.highlighted {
+            animation: pulse-gold 1s infinite alternate;
+            border: 2px solid gold !important;
+            z-index: 5;
+        }
+        .tile.highlighted::after {
+            content: '⬇'; position: absolute; top: -20px;
+            color: gold; font-weight: bold; animation: bounce 0.5s infinite alternate;
+        }
+
+        @keyframes pulse-gold { from { box-shadow: 0 0 5px gold; } to { box-shadow: 0 0 20px gold; } }
+        @keyframes bounce { from { transform: translateY(0); } to { transform: translateY(-5px); } }
+
+        #player {
+            width: var(--tile-size); height: var(--tile-size);
+            background-color: #ff5722; border-radius: 10px;
+            position: absolute; z-index: 10;
+            transition: top 0.1s linear, left 0.1s linear;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 30px; border: 2px solid white;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.6);
+        }
+
+        .modal {
+            display: none; position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: var(--modal-bg); z-index: 100;
+            justify-content: center; align-items: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            background: #263238; width: 85%; height: 85%;
+            border-radius: 12px; padding: 20px;
+            display: flex; flex-direction: column;
+            border: 2px solid #546e7a; color: #eceff1;
+        }
+        
+        .modal-header {
+            display: flex; justify-content: space-between;
+            align-items: center; padding-bottom: 10px;
+            border-bottom: 2px solid #37474f; margin-bottom: 10px;
+        }
+
+        .shop-tabs { display: flex; gap: 10px; margin-bottom: 10px; }
+        .tab-btn {
+            background: #37474f; color: #aaa; border: none;
+            padding: 10px 20px; cursor: pointer; border-radius: 5px; flex: 1;
+        }
+        .tab-btn.active { background: var(--gold-color); color: black; font-weight: bold; }
+
+        .grid-list {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+            gap: 12px; overflow-y: auto; padding: 5px; flex: 1;
+        }
+
+        .item-card {
+            background: #37474f; border: 2px solid #546e7a;
+            border-radius: 8px; padding: 10px;
+            display: flex; flex-direction: column; align-items: center;
+            cursor: pointer; position: relative;
+            min-height: 140px;
+        }
+        .item-card:hover { transform: translateY(-3px); background: #455a64; }
+        .card-icon { font-size: 36px; margin-bottom: 5px; }
+        .card-name { font-size: 14px; font-weight: bold; text-align: center; color: #eceff1; margin-bottom: 4px; }
+        .card-desc { 
+            font-size: 11px; color: #b0bec5; text-align: center; 
+            line-height: 1.3; margin-bottom: auto;
+            padding: 0 2px;
+        }
+        .card-price { color: var(--gold-color); font-size: 13px; margin-top: 8px; font-weight: bold; }
+        .card-count {
+            position: absolute; top: -5px; right: -5px;
+            background: #ef5350; color: white;
+            font-size: 12px; padding: 2px 6px; border-radius: 10px;
+        }
+
+        .tool-card { border-color: #ff7043; }
+
+        .float-msg {
+            position: absolute; color: white; font-weight: bold;
+            text-shadow: 2px 2px 0 #000; animation: floatUp 1.5s forwards;
+            pointer-events: none; z-index: 50; white-space: nowrap;
+        }
+        @keyframes floatUp {
+            0% { transform: translateY(0); opacity: 1; }
+            100% { transform: translateY(-50px); opacity: 0; }
+        }
+
+        .explosion {
+            position: absolute; width: 150px; height: 150px;
+            background: radial-gradient(circle, #ffeb3b, #ff5722, transparent);
+            border-radius: 50%; z-index: 20;
+            animation: explode 0.5s ease-out forwards;
+            opacity: 0.8; pointer-events: none;
+        }
+        @keyframes explode { 0% {transform: scale(0); opacity: 1;} 100% {transform: scale(1.5); opacity: 0;} }
+
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <div class="stat-group">
+            <div class="stat-box">
+                <div id="energy-bar-bg" class="energy-bar-bg"></div>
+                <div class="stat-content">
+                    ⚡ <span id="energy-txt" class="energy-val">100/100</span>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-content">💰 <span id="gold-txt" class="gold-val">0</span></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-content">⬇ <span id="depth-txt" class="depth-val">0m</span></div>
+            </div>
+        </div>
+        <div class="btn-group">
+            <button class="ui-btn btn-inv" onclick="toggleInventory()">🎒 背包 (E)</button>
+            <button class="ui-btn btn-shop" onclick="toggleShop()">🏪 商店 (S)</button>
+            <button class="ui-btn btn-reset" onclick="resetSave()">🗑️ 重置</button>
+        </div>
+    </div>
+
+    <div class="game-area">
+        <div class="toolbar">
+            <div class="tool-slot" onclick="useTool('tnt')" title="炸藥 (1)">
+                <span class="tool-key">1</span>
+                <span class="tool-icon">🧨</span>
+                <span id="qty-tnt" class="tool-count">0</span>
+            </div>
+            <div class="tool-slot" onclick="useTool('map')" title="藏寶圖 (2)">
+                <span class="tool-key">2</span>
+                <span class="tool-icon">🗺️</span>
+                <span id="qty-map" class="tool-count">0</span>
+            </div>
+            <div class="tool-slot" onclick="useTool('battery')" title="電池 (3)">
+                <span class="tool-key">3</span>
+                <span class="tool-icon">🔋</span>
+                <span id="qty-battery" class="tool-count">0</span>
+            </div>
+        </div>
+
+        <div id="game-viewport">
+            <div id="game-world">
+                <div id="player">🤠</div>
+            </div>
+            
+            <div id="modal-shop" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>🏪 黑市</h2>
+                        <div style="color:gold;">持有: $<span id="shop-gold">0</span></div>
+                        <button class="ui-btn btn-reset" onclick="toggleShop()">關閉 (Esc)</button>
+                    </div>
+                    <div class="shop-tabs">
+                        <button class="tab-btn active" id="tab-sell" onclick="switchShopTab('sell')">💰 出售文物</button>
+                        <button class="tab-btn" id="tab-buy" onclick="switchShopTab('buy')">🛒 購買道具</button>
+                    </div>
+                    <div class="grid-list" id="shop-grid"></div>
+                    <div id="shop-actions" style="margin-top:10px; text-align:right;">
+                        <button class="ui-btn btn-shop" onclick="sellAll()">全部出售</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="modal-inv" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>🎒 背包</h2>
+                        <button class="ui-btn btn-reset" onclick="toggleInventory()">關閉 (Esc)</button>
+                    </div>
+                    <div class="grid-list" id="inv-grid"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div style="margin-top:10px; color:#aaa; font-size:0.9rem;">
+        WASD 移動/挖掘 | R 緊急回城 | 1, 2, 3 使用道具 | <span style="color:#76ff03">⚡ 能量會緩慢回復</span>
+    </div>
+
+    <script>
+        // --- 資料設定 ---
+        const TOOLS = {
+            tnt: { id: 'tnt', name: '炸藥', icon: '🧨', price: 100, desc: '對 3x3 區域進行爆破挖掘，無視岩石。' },
+            map: { id: 'map', name: '藏寶圖', icon: '🗺️', price: 150, desc: '標記下方 50 層內最近的稀有以上寶物。' },
+            battery: { id: 'battery', name: '應急電池', icon: '🔋', price: 50, desc: '立即回復 50 點能量。' }
+        };
+
+        const ARTIFACTS = [
+            { id: 'bone', name: '骨頭', icon: '🦴', price: 15, rarity: 'common', desc: '某種古代生物的殘骸，沒有太多研究價值。' },
+            { id: 'pot', name: '陶罐', icon: '🏺', price: 20, rarity: 'common', desc: '古代人用來裝水的容器，稍微有點裂痕。' },
+            { id: 'coin', name: '銅幣', icon: '🪙', price: 60, rarity: 'uncommon', desc: '雖然已經生鏽，但依然能看出往日的流通價值。' },
+            { id: 'dagger', name: '匕首', icon: '🗡️', price: 80, rarity: 'uncommon', desc: '鋒利的古代短劍，刀柄上刻著奇怪的符號。' },
+            { id: 'ring', name: '寶石戒', icon: '💍', price: 250, rarity: 'rare', desc: '鑲嵌著紅寶石的戒指，閃爍著迷人的光芒。' },
+            { id: 'idol', name: '黃金像', icon: '🗿', price: 400, rarity: 'rare', desc: '純金打造的微型神像，收藏家眼中的搶手貨。' },
+            { id: 'crown', name: '王冠', icon: '👑', price: 1200, rarity: 'legendary', desc: '失落已久的帝國王冠，象徵著無上的權力。' },
+            { id: 'ufo', name: '外星物', icon: '🛸', price: 5000, rarity: 'mythic', desc: '不屬於地球科技的神秘金屬，發出微弱的嗡嗡聲。' }
+        ];
+
+        const TILE_SIZE = 50;
+        const COLS = 12;
+        const ROWS = 500;
+
+        let saveData = {
+            gold: 0,
+            inventory: {},
+            tools: { tnt: 0, map: 0, battery: 0 },
+            energy: 100,
+            maxEnergy: 100
+        };
+
+        let player = { x: 5, y: 0 };
+        let gameMap = [];
+        let shopTab = 'sell';
+
+        const worldEl = document.getElementById('game-world');
+        const playerEl = document.getElementById('player');
+        const elEnergy = document.getElementById('energy-txt');
+        const elEnergyBar = document.getElementById('energy-bar-bg');
+        const elGold = document.getElementById('gold-txt');
+        const elDepth = document.getElementById('depth-txt');
+        const modalShop = document.getElementById('modal-shop');
+        const modalInv = document.getElementById('modal-inv');
+
+        function init() {
+            try {
+                loadGame();
+                createMap();
+                updateUI();
+                updateCamera();
+                startEnergyRegen();
+            } catch (e) {
+                console.error("Init failed", e);
+                alert("遊戲初始化失敗，請嘗試按「重置」按鈕。");
+            }
+        }
+
+        // --- 能量自動回復 (慢速) ---
+        function startEnergyRegen() {
+            setInterval(() => {
+                if (saveData.energy < saveData.maxEnergy) {
+                    saveData.energy = Math.min(saveData.energy + 1, saveData.maxEnergy);
+                    updateUI(); // 回復時更新UI
+                }
+            }, 2000); // 修正：改為每 2000ms (2秒) 回復 1 點
+        }
+
+        // --- 地圖生成 ---
+        function createMap() {
+            worldEl.style.height = `${ROWS * TILE_SIZE}px`;
+            gameMap = [];
+            
+            const fragment = document.createDocumentFragment();
+
+            const grass = document.createElement('div');
+            grass.style.cssText = `position:absolute; top:${TILE_SIZE}px; left:0; width:100%; height:5px; background:#4caf50; z-index:5;`;
+            fragment.appendChild(grass);
+
+            for (let y = 0; y < ROWS; y++) {
+                let row = [];
+                for (let x = 0; x < COLS; x++) {
+                    const el = document.createElement('div');
+                    el.className = 'tile';
+                    el.style.left = `${x * TILE_SIZE}px`;
+                    el.style.top = `${y * TILE_SIZE}px`;
+
+                    let type = 'sky';
+                    let item = null;
+
+                    if (y > 0) {
+                        const rockChance = Math.min(0.05 + (y/300), 0.25);
+                        if (Math.random() < rockChance) {
+                            type = 'rock';
+                            el.classList.add('rock');
+                        } else {
+                            type = 'dirt';
+                            el.classList.add('dirt');
+                            if (Math.random() < 0.06) {
+                                item = getRandomLoot(y);
+                            }
+                        }
+                        fragment.appendChild(el);
+                    }
+                    row.push({ x, y, type, item, el });
+                }
+                gameMap.push(row);
+            }
+            
+            worldEl.appendChild(fragment);
+            worldEl.appendChild(playerEl);
+            updatePlayerPos();
+        }
+
+        function getRandomLoot(depth) {
+            const level = Math.floor(depth / 25);
+            let pool = ARTIFACTS.filter(a => {
+                if(a.rarity=='common') return true;
+                if(a.rarity=='uncommon' && level>=1) return true;
+                if(a.rarity=='rare' && level>=2) return true;
+                if(a.rarity=='legendary' && level>=3) return true;
+                if(a.rarity=='mythic' && level>=5) return true;
+                return false;
+            });
+            if(pool.length === 0) return null;
+            return pool[Math.floor(Math.random() * pool.length)];
+        }
+
+        // --- 操作與移動 ---
+        document.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            
+            if (modalShop.style.display === 'flex' || modalInv.style.display === 'flex') {
+                if(k === 'escape') { modalShop.style.display='none'; modalInv.style.display='none'; }
+                return;
+            }
+
+            if (k === 'e') toggleInventory();
+            if (k === 's') toggleShop();
+            if (k === 'r') returnHome();
+            if (k === '1') useTool('tnt');
+            if (k === '2') useTool('map');
+            if (k === '3') useTool('battery');
+
+            let dx = 0, dy = 0;
+            if (k === 'w' || k === 'arrowup') dy = -1;
+            if (k === 's' || k === 'arrowdown') dy = 1;
+            if (k === 'a' || k === 'arrowleft') dx = -1;
+            if (k === 'd' || k === 'arrowright') dx = 1;
+
+            if (dx || dy) move(dx, dy);
+        });
+
+        function move(dx, dy) {
+            const nx = player.x + dx, ny = player.y + dy;
+            if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return;
+            if (!gameMap[ny] || !gameMap[ny][nx]) return; 
+            
+            const t = gameMap[ny][nx];
+
+            if (t.type === 'rock') {
+                showFloat("太硬了!", nx, ny, '#aaa');
+                return;
+            }
+            if (t.type === 'dirt') {
+                if (saveData.energy > 0) {
+                    saveData.energy--;
+                    dig(t);
+                    player.x = nx; player.y = ny;
+                } else {
+                    // 電量為 0 時，強制更新 UI 確保顯示正確
+                    updateUI();
+                    showFloat("沒電了!", player.x, player.y, 'red');
+                    return;
+                }
+            } else {
+                player.x = nx; player.y = ny;
+            }
+            
+            // 修正關鍵：每次移動/挖掘後，強制更新 UI
+            updateUI();
+            updatePlayerPos();
+            updateCamera();
+            saveGame();
+        }
+
+        function dig(tile) {
+            tile.type = 'sky';
+            tile.el.className = 'tile'; 
+            tile.el.innerHTML = ''; 
+            
+            if (tile.item) {
+                const id = tile.item.id;
+                saveData.inventory[id] = (saveData.inventory[id] || 0) + 1;
+                showFloat(`+${tile.item.icon}`, tile.x, tile.y, 'gold');
+            }
+        }
+
+        function returnHome() {
+            if(player.y === 0) return;
+            player.y = 0; player.x = Math.floor(COLS/2);
+            updatePlayerPos(); updateCamera();
+            showFloat("🚀 回城", player.x, 0, '#0f0');
+        }
+
+        // --- 道具功能 ---
+        function useTool(toolId) {
+            if (!saveData.tools[toolId] || saveData.tools[toolId] <= 0) {
+                showFloat("道具不足!", player.x, player.y, 'red');
+                return;
+            }
+
+            let used = false;
+            if (toolId === 'battery') {
+                if (saveData.energy >= saveData.maxEnergy) {
+                    showFloat("電力已滿", player.x, player.y, '#fff');
+                    return;
+                }
+                saveData.energy = Math.min(saveData.energy + 50, saveData.maxEnergy);
+                showFloat("+50 ⚡", player.x, player.y, '#76ff03');
+                used = true;
+            } 
+            else if (toolId === 'tnt') {
+                createExplosion(player.x, player.y);
+                for(let ly = player.y - 1; ly <= player.y + 1; ly++) {
+                    for(let lx = player.x - 1; lx <= player.x + 1; lx++) {
+                        if(ly > 0 && ly < ROWS && lx >= 0 && lx < COLS) {
+                            const t = gameMap[ly][lx];
+                            if(t.type !== 'sky') dig(t);
+                        }
+                    }
+                }
+                used = true;
+            }
+            else if (toolId === 'map') {
+                let target = null;
+                let minDist = 9999;
+                for(let y = player.y; y < Math.min(ROWS, player.y + 50); y++) {
+                    for(let x = 0; x < COLS; x++) {
+                        const t = gameMap[y][x];
+                        if(!t.item) continue;
+                        if(['rare', 'legendary', 'mythic'].includes(t.item.rarity)) {
+                            const dist = Math.abs(player.x - x) + Math.abs(player.y - y);
+                            if(dist < minDist) {
+                                minDist = dist;
+                                target = t;
+                            }
+                        }
+                    }
+                }
+                if(target) {
+                    target.el.classList.add('highlighted');
+                    showFloat("發現訊號!", player.x, player.y, 'gold');
+                    worldEl.style.transform = `translateY(-${(target.y * TILE_SIZE) - 300}px)`;
+                    setTimeout(updateCamera, 1000);
+                    used = true;
+                } else {
+                    showFloat("附近無反應...", player.x, player.y, '#ccc');
+                    return; 
+                }
+            }
+
+            if(used) {
+                saveData.tools[toolId]--;
+                saveGame();
+                updateUI();
+            }
+        }
+
+        function createExplosion(gx, gy) {
+            const div = document.createElement('div');
+            div.className = 'explosion';
+            div.style.left = `${(gx * TILE_SIZE) - 50}px`;
+            div.style.top = `${(gy * TILE_SIZE) - 50}px`;
+            worldEl.appendChild(div);
+            setTimeout(() => div.remove(), 600);
+        }
+
+        // --- 商店與介面 ---
+        function toggleShop() {
+            modalInv.style.display = 'none';
+            if (modalShop.style.display === 'flex') modalShop.style.display = 'none';
+            else {
+                switchShopTab('sell');
+                modalShop.style.display = 'flex';
+            }
+        }
+
+        function switchShopTab(tab) {
+            shopTab = tab;
+            document.getElementById('tab-sell').className = tab==='sell'?'tab-btn active':'tab-btn';
+            document.getElementById('tab-buy').className = tab==='buy'?'tab-btn active':'tab-btn';
+            document.getElementById('shop-actions').style.display = tab==='sell'?'block':'none';
+            renderShop();
+        }
+
+        function renderShop() {
+            const grid = document.getElementById('shop-grid');
+            document.getElementById('shop-gold').innerText = saveData.gold;
+            grid.innerHTML = '';
+
+            if (shopTab === 'sell') {
+                const items = ARTIFACTS.filter(a => saveData.inventory[a.id] > 0);
+                if(items.length===0) grid.innerHTML = '<div style="color:#aaa;width:100%;">無可出售物品</div>';
+                
+                items.forEach(item => {
+                    const count = saveData.inventory[item.id];
+                    const div = document.createElement('div');
+                    div.className = 'item-card';
+                    div.style.borderColor = getRarityColor(item.rarity);
+                    div.innerHTML = `
+                        <div class="card-count">${count}</div>
+                        <div class="card-icon">${item.icon}</div>
+                        <div class="card-name">${item.name}</div>
+                        <div class="card-desc">${item.desc}</div>
+                        <div class="card-price">$${item.price}</div>
+                    `;
+                    div.onclick = () => {
+                        saveData.inventory[item.id]--;
+                        saveData.gold += item.price;
+                        saveGame(); renderShop(); updateUI();
+                    };
+                    grid.appendChild(div);
+                });
+            } else {
+                Object.values(TOOLS).forEach(tool => {
+                    const div = document.createElement('div');
+                    div.className = 'item-card tool-card';
+                    div.innerHTML = `
+                        <div class="card-icon">${tool.icon}</div>
+                        <div class="card-name">${tool.name}</div>
+                        <div class="card-desc">${tool.desc}</div>
+                        <div class="card-price">$${tool.price}</div>
+                    `;
+                    div.onclick = () => {
+                        if(saveData.gold >= tool.price) {
+                            saveData.gold -= tool.price;
+                            saveData.tools[tool.id] = (saveData.tools[tool.id]||0) + 1;
+                            saveGame(); renderShop(); updateUI();
+                        } else {
+                            alert("金錢不足!");
+                        }
+                    };
+                    grid.appendChild(div);
+                });
+            }
+        }
+
+        function sellAll() {
+            let gain = 0;
+            ARTIFACTS.forEach(a => {
+                const c = saveData.inventory[a.id] || 0;
+                if(c > 0) {
+                    gain += c * a.price;
+                    saveData.inventory[a.id] = 0;
+                }
+            });
+            if(gain > 0) {
+                saveData.gold += gain;
+                saveGame(); renderShop(); updateUI();
+            }
+        }
+
+        function toggleInventory() {
+            modalShop.style.display='none';
+            if(modalInv.style.display==='flex') modalInv.style.display='none';
+            else {
+                const grid = document.getElementById('inv-grid');
+                grid.innerHTML = '';
+                ARTIFACTS.forEach(a => {
+                    if(saveData.inventory[a.id]) {
+                        const d = document.createElement('div');
+                        d.className = 'item-card';
+                        d.style.borderColor = getRarityColor(a.rarity);
+                        d.innerHTML = `
+                            <div class="card-count">${saveData.inventory[a.id]}</div>
+                            <div class="card-icon">${a.icon}</div>
+                            <div class="card-name">${a.name}</div>
+                            <div class="card-desc">${a.desc}</div>
+                        `;
+                        grid.appendChild(d);
+                    }
+                });
+                modalInv.style.display='flex';
+            }
+        }
+
+        function updateUI() {
+            const pct = (saveData.energy / saveData.maxEnergy) * 100;
+            elEnergy.innerText = `${Math.floor(saveData.energy)}/${saveData.maxEnergy}`;
+            elGold.innerText = saveData.gold;
+            // 更新進度條
+            elEnergyBar.style.width = `${pct}%`;
+            
+            document.getElementById('qty-tnt').innerText = saveData.tools.tnt || 0;
+            document.getElementById('qty-map').innerText = saveData.tools.map || 0;
+            document.getElementById('qty-battery').innerText = saveData.tools.battery || 0;
+            
+            elEnergy.style.color = saveData.energy < 20 ? '#ff5252' : '#76ff03';
+        }
+
+        function updatePlayerPos() {
+            playerEl.style.left = `${player.x * TILE_SIZE}px`;
+            playerEl.style.top = `${player.y * TILE_SIZE}px`;
+            elDepth.innerText = `${player.y}m`;
+        }
+
+        function updateCamera() {
+            const vH = 600;
+            let sy = (player.y * TILE_SIZE) - (vH/2);
+            if(sy < 0) sy = 0;
+            if(sy > (ROWS*TILE_SIZE - vH)) sy = ROWS*TILE_SIZE - vH;
+            worldEl.style.transform = `translateY(-${sy}px)`;
+        }
+
+        function showFloat(txt, x, y, color) {
+            const el = document.createElement('div');
+            el.className = 'float-msg';
+            el.innerText = txt; el.style.color = color;
+            el.style.left = `${x * TILE_SIZE}px`; el.style.top = `${y * TILE_SIZE}px`;
+            worldEl.appendChild(el);
+            setTimeout(() => el.remove(), 1500);
+        }
+
+        function getRarityColor(r) {
+            if(r==='common') return '#bdbdbd';
+            if(r==='uncommon') return '#66bb6a';
+            if(r==='rare') return '#42a5f5';
+            if(r==='legendary') return '#ffca28';
+            return '#ab47bc';
+        }
+
+        function saveGame() {
+            localStorage.setItem('digger_save_v3', JSON.stringify(saveData));
+        }
+
+        function loadGame() {
+            const s = localStorage.getItem('digger_save_v3');
+            if(s) {
+                try {
+                    const parsed = JSON.parse(s);
+                    saveData = { ...saveData, ...parsed };
+                    if(!saveData.tools) saveData.tools = { tnt:0, map:0, battery:0 };
+                    if(!saveData.inventory) saveData.inventory = {};
+                } catch(e) {
+                    console.error("Save file corrupted, using default.", e);
+                }
+            }
+        }
+        
+        function resetSave() {
+            if(confirm("重置進度? 這將刪除所有資料。")) {
+                localStorage.removeItem('digger_save_v3');
+                location.reload();
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
